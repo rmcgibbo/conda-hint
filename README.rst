@@ -9,3 +9,11 @@ Examples
 
   $ conda-hint 'numpy 1.9*' 'python 3.5*' statsmodels
   $ conda-hint 'msmbuilder' 'numpy 1.9*' 'python 3.5*' --platform win-32
+
+Installation
+------------
+::
+
+  $ pip install git+git://github.com/rmcgibbo/conda-hint.py
+
+Requires ``conda``, ``termcolor``, and Python 3.5+.
