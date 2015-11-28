@@ -52,6 +52,7 @@ def main():
 
 def execute(specs: List[str], r: Resolve) -> None:
     mspecs = [MatchSpec(m) for m in specs]
+    unmet_dependency = None  # type: Union[None, str]
     depgraph, pkgs = implicated_packages(specs, r)
 
     # mapping from package name to all of the filenames that are plausible
@@ -112,14 +113,16 @@ def execute(specs: List[str], r: Resolve) -> None:
             # if a package with zero installation candidates is *required*
             # (in the user's supplied specs), then we know we've failed.
             if len(valid[key]) == 0 and any(key == ms.name for ms in mspecs):
-                print_output(exclusion_reasons, depgraph)
-                return None
+                unmet_dependency = key
 
         # convergence without any invalidated packages, so we can't generate
         # a hint :(
         post_length = sum(len(fns) for fns in valid.values())
         if pre_length == post_length:
             break
+
+        if unmet_dependency is not None:
+            print_output(unmet_dependency, exclusion_reasons, depgraph)
 
         return None
 
@@ -132,22 +135,15 @@ def deps_are_satisfiable(fn: str, valid: Dict[str, List[str]], r: Resolve) -> Di
     }
 
 
-def print_output(reasons: OrderedDict, depgraph: Dict) -> None:
-    names_printed = set()  # type: Set[str]
-
-    def print_reason(name: str) -> None:
-        if name not in reasons or name in names_printed:
-            return
-
-        names_printed.add(name)
-        print('\n', reasons[name])
-        for m in depgraph[name]:
-            print_reason(m)
-
-    # the final package that had zero valid installation candidates and
-    # triggered the failure.
-    eliminated_on = list(reasons.keys())[-1]
-    print_reason(eliminated_on)
+def print_output(start: str, reasons: OrderedDict, graph: Dict) -> None:
+    visited = set()  # type: Set
+    queue = [start]  # type: List[str]
+    while queue:
+        vertex = queue.pop(0)
+        if vertex not in visited and vertex in reasons:
+            print('\n', reasons[vertex])
+            visited.add(vertex)
+            queue.extend(graph[vertex] - visited)
 
 
 def implicated_packages(specs: List[str], r: Resolve) -> Tuple[Dict[str, Set[str]], List[str]]:
