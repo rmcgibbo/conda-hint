@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """conda-hint: Hint as to why a given set of conda package specs are
 unsatisfiable.
 
@@ -22,8 +21,8 @@ from typing import Dict, List, Tuple, Set
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument('specs', nargs='+', help='One or more package specifications. '
-    		'Note that to use spaces inside\na spec, you need to enclose it in '
-    		'quotes on the command line. \nExamples: \'numpy 1.9*\' scikit-learn \'python 3.5*\'')
+            'Note that to use spaces inside\na spec, you need to enclose it in '
+            'quotes on the command line. \nExamples: \'numpy 1.9*\' scikit-learn \'python 3.5*\'')
     p.add_argument(
         '-p', '--platform',
         choices=['linux-64', 'linux-32', 'osx-64', 'win-32', 'win-64'],
@@ -89,16 +88,18 @@ def execute(specs: List[str], r: Resolve) -> None:
         pre_length = sum(len(fns) for fns in valid.values())
 
         for key, fns in valid.items():
-            satisfied = {}  # type: Dict[str, dict[MatchSpec, bool]]
-            for fn in fns:
-                satisfied[fn] = {
-                    ms: any(depfn in valid[ms.name]
-                            for depfn in r.find_matches(ms))
-                    for ms in r.ms_depends(fn)
-                }
+            # map filenames to a dict whose keys are the MatchSpecs
+            # that this file depends on, and the values are whether
+            # or not that MatchSpec currently has *any* valid files that
+            # would satisfy it.
+            satisfied = {fn: deps_are_satisfiable(fn, valid, r) for fn in fns}
+            # files can only stay in valid if each of their dependencies
+            # is satisfiable.
             valid[key] = {fn for fn, sat in satisfied.items()
                           if all(sat.values())}
 
+            # if a certain package now has zero valid installation candidates,
+            # we want to record a string to help explain why.
             if len(valid[key]) == 0 and key not in exclusion_reasons:
                 fn2coloreddeps = {}  # type: Dict[str, str]
                 for fn, sat in satisfied.items():
@@ -109,18 +110,31 @@ def execute(specs: List[str], r: Resolve) -> None:
                 lines = ['No %s binary matches specs:' % colored(key, 'blue')]
                 for fn in sorted(fn2coloreddeps.keys())[::-1]:
                     coloreddeps = fn2coloreddeps[fn]
-                    lines.append(''.join(('  ', fn, ': ', coloreddeps)))
+                    # strip off the '.tar.bz2' when making the printout
+                    lines.append(''.join(('  ', fn[:-8], ': ', coloreddeps)))
                 exclusion_reasons[key] = '\n'.join(lines)
 
+            # if a package with zero installation candidates is *required*
+            # (in the user's supplied specs), then we know we've failed.
             if len(valid[key]) == 0 and any(key == ms.name for ms in mspecs):
                 print_output(exclusion_reasons, depgraph)
                 return None
 
+        # convergence without any invalidated packages, so we can't generate
+        # a hint :(
         post_length = sum(len(fns) for fns in valid.values())
         if pre_length == post_length:
             break
 
         return None
+
+
+def deps_are_satisfiable(fn: str, valid: Dict[str, List[str]], r: Resolve) -> Dict[MatchSpec, bool]:
+    return {
+        ms: any(depfn in valid[ms.name]
+                for depfn in r.find_matches(ms))
+        for ms in r.ms_depends(fn)
+    }
 
 
 def print_output(reasons: OrderedDict, depgraph: Dict) -> None:
@@ -135,6 +149,8 @@ def print_output(reasons: OrderedDict, depgraph: Dict) -> None:
         for m in depgraph[name]:
             print_reason(m)
 
+    # the final package that had zero valid installation candidates and
+    # triggered the failure.
     eliminated_on = list(reasons.keys())[-1]
     print_reason(eliminated_on)
 
