@@ -8,6 +8,7 @@ $ conda-hint 'numpy'
 """
 import sys
 import argparse
+from functools import reduce                  # type: ignore
 from collections import defaultdict, OrderedDict
 
 import conda.config                           # type: ignore
@@ -52,8 +53,10 @@ def main():
 
 def execute(specs: List[str], r: Resolve) -> None:
     mspecs = [MatchSpec(m) for m in specs]
+
     unmet_dependency = None  # type: Union[None, str]
-    depgraph, pkgs = implicated_packages(specs, r)
+    pkgs = implicated_packages(specs, r)
+    unmet_depgraph = {}  # type: Dict[str, Set[str]]
 
     # mapping from package name to all of the filenames that are plausible
     # installation candidates for that package
@@ -83,12 +86,16 @@ def execute(specs: List[str], r: Resolve) -> None:
         # to ditect convergence and control terminatio of the while loop.
         pre_length = sum(len(fns) for fns in valid.values())
 
-        for key, fns in valid.items():
+        # iterate over the items in ``valid`` with the keys in the order
+        # of pkgs, so that we go up the dependency chain.
+        for key, fns in zip(pkgs, (valid[pkg] for pkg in pkgs)):
+
             # map filenames to a dict whose keys are the MatchSpecs
             # that this file depends on, and the values are whether
             # or not that MatchSpec currently has *any* valid files that
             # would satisfy it.
             satisfied = {fn: deps_are_satisfiable(fn, valid, r) for fn in fns}
+
             # files can only stay in valid if each of their dependencies
             # is satisfiable.
             valid[key] = {fn for fn, sat in satisfied.items()
@@ -97,6 +104,9 @@ def execute(specs: List[str], r: Resolve) -> None:
             # if a certain package now has zero valid installation candidates,
             # we want to record a string to help explain why.
             if len(valid[key]) == 0 and key not in exclusion_reasons:
+                unmet_depgraph[key] =  {ms.name for ms2sat in satisfied.values()
+                                                for ms in ms2sat if not ms2sat[ms]}
+
                 fn2coloreddeps = {}  # type: Dict[str, str]
                 for fn, sat in satisfied.items():
                     parts = [colored(d.spec, 'green' if sat[d] else 'red')
@@ -104,16 +114,18 @@ def execute(specs: List[str], r: Resolve) -> None:
                     fn2coloreddeps[fn] = ', '.join(parts)
 
                 lines = ['No %s binary matches specs:' % colored(key, 'blue')]
+                max_fn_length = max(len(fn) for fn in fn2coloreddeps.keys())
+                fn_spec = '%-{0:d}s'.format(max_fn_length-6)
                 for fn in sorted(fn2coloreddeps.keys(), reverse=True):
                     coloreddeps = fn2coloreddeps[fn]
                     # strip off the '.tar.bz2' when making the printout
-                    lines.append(''.join(('  ', fn[:-8], ': ', coloreddeps)))
+                    lines.append(''.join(('  ', fn_spec % (fn[:-8] + ': '), coloreddeps)))
                 exclusion_reasons[key] = '\n'.join(lines)
 
-            # if a package with zero installation candidates is *required*
-            # (in the user's supplied specs), then we know we've failed.
-            if len(valid[key]) == 0 and any(key == ms.name for ms in mspecs):
-                unmet_dependency = key
+                # if a package with zero installation candidates is *required*
+                # (in the user's supplied specs), then we know we've failed.
+                if any(key == ms.name for ms in mspecs):
+                    unmet_dependency = key
 
         # convergence without any invalidated packages, so we can't generate
         # a hint :(
@@ -122,7 +134,7 @@ def execute(specs: List[str], r: Resolve) -> None:
             break
 
         if unmet_dependency is not None:
-            print_output(unmet_dependency, exclusion_reasons, depgraph)
+            print_output(unmet_dependency, exclusion_reasons, unmet_depgraph)
 
         return None
 
@@ -135,7 +147,7 @@ def deps_are_satisfiable(fn: str, valid: Dict[str, List[str]], r: Resolve) -> Di
     }
 
 
-def print_output(start: str, reasons: OrderedDict, graph: Dict) -> None:
+def print_output(start: str, reasons: OrderedDict, graph: Dict[str, Set[str]]) -> None:
     visited = set()  # type: Set
     queue = [start]  # type: List[str]
     while queue:
@@ -143,10 +155,10 @@ def print_output(start: str, reasons: OrderedDict, graph: Dict) -> None:
         if vertex not in visited and vertex in reasons:
             print('\n', reasons[vertex])
             visited.add(vertex)
-            queue.extend(graph[vertex] - visited)
+            queue.extend((v for v in sorted(graph[vertex]) if v not in visited))
 
 
-def implicated_packages(specs: List[str], r: Resolve) -> Tuple[Dict[str, Set[str]], List[str]]:
+def implicated_packages(specs: List[str], r: Resolve) -> List[str]:
     """Get a list of all packages implicated as possible direct or indirect
     depdencies of ``specs``.
 
@@ -175,7 +187,7 @@ def implicated_packages(specs: List[str], r: Resolve) -> Tuple[Dict[str, Set[str
 
     for spec in specs:
         add_package(spec)
-    return depgraph, toposort(depgraph)
+    return toposort(depgraph)
 
 
 def solve(specs: List[str], r: Resolve) -> Union[bool, Iterable[str]]:
