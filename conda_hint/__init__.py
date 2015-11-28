@@ -15,7 +15,7 @@ from conda.api import get_index               # type: ignore
 from conda.resolve import Resolve, MatchSpec  # type: ignore
 from conda.toposort import toposort           # type: ignore
 from termcolor import colored                 # type: ignore
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Tuple, Set, Union, Iterable
 
 
 def main():
@@ -38,19 +38,14 @@ def main():
     index = get_index()
     resolver = Resolve(index)
 
-    try:
-        fns = []
-        for fn in resolver.solve(args.specs, minimal_hint=False):
-            fns.append(fn)
+    fns = solve(args.specs, resolver)
+    if fns is not False:
         print('\n\nFound solution:')
         print(' ', '\n  '.join(fns))
         return 0
-
-    except SystemExit as e:
-        print(str(e))
-
-    print("Generating hint: %s" % (', '.join(args.specs)))
-    execute(args.specs, resolver)
+    else:
+        print("Generating hint: %s" % (', '.join(args.specs)))
+        execute(args.specs, resolver)
 
     return 1
 
@@ -108,7 +103,7 @@ def execute(specs: List[str], r: Resolve) -> None:
                     fn2coloreddeps[fn] = ', '.join(parts)
 
                 lines = ['No %s binary matches specs:' % colored(key, 'blue')]
-                for fn in sorted(fn2coloreddeps.keys())[::-1]:
+                for fn in sorted(fn2coloreddeps.keys(), reverse=True):
                     coloreddeps = fn2coloreddeps[fn]
                     # strip off the '.tar.bz2' when making the printout
                     lines.append(''.join(('  ', fn[:-8], ': ', coloreddeps)))
@@ -185,6 +180,32 @@ def implicated_packages(specs: List[str], r: Resolve) -> Tuple[Dict[str, Set[str
     for spec in specs:
         add_package(spec)
     return depgraph, toposort(depgraph)
+
+
+def solve(specs: List[str], r: Resolve) -> Union[bool, Iterable[str]]:
+    features = set()  # type: Set
+    for spec in specs:
+        if conda.config.platform == 'win32' and spec == 'python':
+            continue
+        # XXX: This does not work when a spec only contains the name,
+        # and different versions of the package have different features.
+        ms = MatchSpec(spec)
+        for pkg in r.get_pkgs(ms, max_only=False):
+            fn = pkg.fn
+            features.update(r.track_features(fn))
+    for spec in specs:
+        for pkg in r.get_pkgs(MatchSpec(spec), max_only=False):
+            fn = pkg.fn
+            r.update_with_features(fn, features)
+
+    print("Solving package specifications: ", end='')
+    try:
+        return r.explicit(specs) or r.solve2(specs, features,
+           installed=(), minimal_hint=False, guess=False, unsat_only=True)
+    except RuntimeError:
+        print('\n')
+        return False
+
 
 
 if __name__ == '__main__':
