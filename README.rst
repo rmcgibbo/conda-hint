@@ -7,5 +7,5 @@ Examples
 --------
 ::
 
-  $ conda-hint 'numpy 1.9*' 'python 3.5*' scikit-learn
-  $ conda-hint 'numpy'
+  $ conda-hint 'numpy 1.9*' 'python 3.5*' statsmodels
+  $ conda-hint 'msmbuilder' 'numpy 1.9*' 'python 3.5*' --platform win-32
