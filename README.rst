@@ -14,6 +14,6 @@ Installation
 ------------
 ::
 
-  $ pip install git+git://github.com/rmcgibbo/conda-hint.py
+  $ pip install git+git://github.com/rmcgibbo/conda-hint
 
 Requires ``conda``, ``termcolor``, and Python 3.5+.
